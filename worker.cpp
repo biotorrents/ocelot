@@ -126,7 +126,7 @@ std::string worker::work(const std::string &input, std::string &ip, client_opts_
 	bool parsing_key = true; // true = key, false = value
 
 	++pos; // Skip the '?'
-	for (; pos < input_length; ++pos) {
+	for (; pos < input_length - 6; ++pos) {
 		if (input[pos] == '=') {
 			parsing_key = false;
 		} else if (input[pos] == '&' || input[pos] == ' ') {
@@ -257,13 +257,13 @@ std::string worker::work(const std::string &input, std::string &ip, client_opts_
 				return error("Unregistered torrent", client_opts);
 			}
 		}
-		return announce(input, tor->second, u, params, headers, ip, client_opts);
+		return announce(tor->second, u, params, headers, ip, client_opts);
 	} else {
 		return scrape(infohashes, headers, client_opts);
 	}
 }
 
-std::string worker::announce(const std::string &input, torrent &tor, user_ptr &u, params_type &params, params_type &headers, std::string &ip, client_opts_t &client_opts) {
+std::string worker::announce(torrent &tor, user_ptr &u, params_type &params, params_type &headers, std::string &ip, client_opts_t &client_opts) {
 	cur_time = time(NULL);
 
 	if (params["compact"] != "1") {
@@ -447,6 +447,11 @@ std::string worker::announce(const std::string &input, torrent &tor, user_ptr &u
 				std::string record_str = record.str();
 				db->record_user(record_str);
 			}
+
+			std::stringstream record;
+			record << '(' << userid << ',' << downloaded << ',' << left << ',' << uploaded << ',' << upspeed << ',' << downspeed << ',' << (cur_time - p->first_announced);
+			std::string record_str = record.str();
+			db->record_peer_hist(record_str, peer_id, tor.id);
 		}
 	}
 	p->left = left;
@@ -899,7 +904,8 @@ std::string worker::update(params_type &params, client_opts_t &client_opts) {
 		auto u = users_list.find(passkey);
 		if (u == users_list.end()) {
 			bool protect_ip = params["visible"] == "0";
-			user_ptr tmp_user = std::make_shared<user>(userid, true, protect_ip);
+			bool can_leech = params["can_leech"] != "0";
+			user_ptr tmp_user = std::make_shared<user>(userid, can_leech, protect_ip);
 			users_list.insert(std::pair<std::string, user_ptr>(passkey, tmp_user));
 			std::cout << "Added user " << passkey << " with id " << userid << std::endl;
 		} else {

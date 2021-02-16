@@ -88,6 +88,7 @@ void config::init() {
 
 	// Debugging
 	add("readonly", false);
+	add("disable_peer_history", false);
 }
 
 confval * config::get(const std::string &setting_name) {

@@ -14,7 +14,7 @@
 
 #define DB_LOCK_TIMEOUT 50
 
-mysql::mysql(config * conf) : u_active(false), t_active(false), p_active(false), s_active(false), tok_active(false) {
+mysql::mysql(config * conf) : u_active(false), t_active(false), p_active(false), s_active(false), tok_active(false), hist_active(false) {
 	load_config(conf);
 	if (mysql_db == "") {
 		std::cout << "No database selected" << std::endl;
@@ -44,6 +44,7 @@ void mysql::load_config(config * conf) {
 	mysql_username = conf->get_str("mysql_username");
 	mysql_password = conf->get_str("mysql_password");
 	readonly = conf->get_bool("readonly");
+	disable_peer_history = conf->get_bool("disable_peer_history");
 }
 
 void mysql::reload_config(config * conf) {
@@ -140,7 +141,7 @@ void mysql::load_torrents(torrent_list &torrents) {
 }
 
 void mysql::load_users(user_list &users) {
-	mysqlpp::Query query = conn.query("SELECT ID, can_leech, torrent_pass, (Visible='0' OR IP='127.0.0.1') AS Protected FROM users_main WHERE Enabled='1';");
+	mysqlpp::Query query = conn.query("SELECT um.ID, um.can_leech, um.torrent_pass, (um.Visible='0' OR um.IP='127.0.0.1') AS Protected FROM users_main AS um WHERE um.Enabled='1';");
 	try {
 		mysqlpp::StoreQueryResult res = query.store();
 		size_t num_rows = res.num_rows();
@@ -272,6 +273,15 @@ void mysql::record_peer(const std::string &record, const std::string &peer_id) {
 	update_light_peer_buffer += q.str();
 }
 
+void mysql::record_peer_hist(const std::string &record, const std::string &peer_id, const int tid) {
+	if (update_peer_hist_buffer != "") {
+		update_peer_hist_buffer += ",";
+	}
+	mysqlpp::Query q = conn.query();
+	q << record << ',' << mysqlpp::quote << peer_id << ',' << tid << ',' << time(NULL) << ')';
+	update_peer_hist_buffer += q.str();
+}
+
 void mysql::record_snatch(const std::string &record, const std::string &ip) {
 	if (update_snatch_buffer != "") {
 		update_snatch_buffer += ",";
@@ -282,7 +292,7 @@ void mysql::record_snatch(const std::string &record, const std::string &ip) {
 }
 
 bool mysql::all_clear() {
-	return (user_queue.size() == 0 && torrent_queue.size() == 0 && peer_queue.size() == 0 && snatch_queue.size() == 0 && token_queue.size() == 0);
+	return (user_queue.size() == 0 && torrent_queue.size() == 0 && peer_queue.size() == 0 && snatch_queue.size() == 0 && token_queue.size() == 0 && peer_hist_queue.size() == 0);
 }
 
 void mysql::flush() {
@@ -290,6 +300,7 @@ void mysql::flush() {
 	flush_torrents();
 	flush_snatches();
 	flush_peers();
+	flush_peer_hist();
 	flush_tokens();
 }
 
@@ -302,7 +313,11 @@ void mysql::flush_users() {
 	std::lock_guard<std::mutex> uq_lock(user_queue_lock);
 	size_t qsize = user_queue.size();
 	if (verbose_flush || qsize > 0) {
-		std::cout << "User flush queue size: " << qsize << ", next query length: " << user_queue.front().size() << std::endl;
+		std::cout << "User flush queue size: " << qsize;
+		if (qsize > 0) {
+			std::cout << ", next query length: " << user_queue.front().size();
+		}
+		std::cout << std::endl;
 	}
 	if (update_user_buffer == "") {
 		return;
@@ -327,7 +342,11 @@ void mysql::flush_torrents() {
 	std::lock_guard<std::mutex> tq_lock(torrent_queue_lock);
 	size_t qsize = torrent_queue.size();
 	if (verbose_flush || qsize > 0) {
-		std::cout << "Torrent flush queue size: " << qsize << ", next query length: " << torrent_queue.front().size() << std::endl;
+		std::cout << "Torrent flush queue size: " << qsize;
+		if (qsize > 0) {
+			std::cout << ", next query length: " << torrent_queue.front().size();
+		}
+		std::cout << std::endl;
 	}
 	if (update_torrent_buffer == "") {
 		return;
@@ -356,7 +375,11 @@ void mysql::flush_snatches() {
 	std::lock_guard<std::mutex> sq_lock(snatch_queue_lock);
 	size_t qsize = snatch_queue.size();
 	if (verbose_flush || qsize > 0) {
-		std::cout << "Snatch flush queue size: " << qsize << ", next query length: " << snatch_queue.front().size() << std::endl;
+		std::cout << "Snatch flush queue size: " << qsize;
+		if (qsize > 0) {
+			std::cout << ", next query length: " << snatch_queue.front().size();
+		}
+		std::cout << std::endl;
 	}
 	if (update_snatch_buffer == "" ) {
 		return;
@@ -380,12 +403,22 @@ void mysql::flush_peers() {
 	std::lock_guard<std::mutex> pq_lock(peer_queue_lock);
 	size_t qsize = peer_queue.size();
 	if (verbose_flush || qsize > 0) {
-		std::cout << "Peer flush queue size: " << qsize << ", next query length: " << peer_queue.front().size() << std::endl;
+		std::cout << "Peer flush queue size: " << qsize;
+		if (qsize > 0) {
+			std::cout << ", next query length: " << peer_queue.front().size();
+		}
+		std::cout << std::endl;
 	}
 
 	// Nothing to do
 	if (update_light_peer_buffer == "" && update_heavy_peer_buffer == "") {
 		return;
+	}
+
+	if (qsize == 0) {
+		sql = "SET session sql_log_bin = 0";
+		peer_queue.push(sql);
+		sql.clear();
 	}
 
 	if (update_heavy_peer_buffer != "") {
@@ -427,6 +460,43 @@ void mysql::flush_peers() {
 	}
 }
 
+void mysql::flush_peer_hist() {
+	if (readonly || disable_peer_history) {
+		update_peer_hist_buffer.clear();
+		return;
+	}
+	std::string sql;
+	std::lock_guard<std::mutex> phq_lock(peer_hist_queue_lock);
+	size_t qsize = peer_hist_queue.size();
+	if (verbose_flush || qsize > 0) {
+		std::cout << "Peer history flush queue size: " << qsize;
+		if (qsize > 0) {
+			std::cout << ", next query length: " << peer_hist_queue.front().size();
+		}
+		std::cout << std::endl;
+	}
+	if (qsize >= 1000) {
+		peer_hist_queue.pop();
+	}
+	if (update_peer_hist_buffer == "") {
+		return;
+	}
+
+	if (qsize == 0) {
+		sql = "SET session sql_log_bin = 0";
+		peer_hist_queue.push(sql);
+		sql.clear();
+	}
+
+	sql = "INSERT IGNORE INTO xbt_peers_history (uid, downloaded, remaining, uploaded, upspeed, downspeed, timespent, peer_id, fid, mtime) VALUES " + update_peer_hist_buffer;
+	peer_hist_queue.push(sql);
+	update_peer_hist_buffer.clear();
+	if (hist_active == false) {
+		std::thread thread(&mysql::do_flush_peer_hist, this);
+		thread.detach();
+	}
+}
+
 void mysql::flush_tokens() {
 	if (readonly) {
 		update_token_buffer.clear();
@@ -436,7 +506,11 @@ void mysql::flush_tokens() {
 	std::lock_guard<std::mutex> tq_lock(token_queue_lock);
 	size_t qsize = token_queue.size();
 	if (verbose_flush || qsize > 0) {
-		std::cout << "Token flush queue size: " << qsize << ", next query length: " << token_queue.front().size() << std::endl;
+		std::cout << "Token flush queue size: " << qsize;
+		if (qsize > 0) {
+			std::cout << ", next query length: " << token_queue.front().size();
+		}
+		std::cout << std::endl;
 	}
 	if (update_token_buffer == "") {
 		return;
@@ -555,6 +629,40 @@ void mysql::do_flush_peers() {
 		std::cerr << "MySQL error in flush_peers: " << er.what() << std::endl;
 	}
 	p_active = false;
+}
+
+void mysql::do_flush_peer_hist() {
+	hist_active = true;
+	try {
+		mysqlpp::Connection c(mysql_db.c_str(), mysql_host.c_str(), mysql_username.c_str(), mysql_password.c_str(), 0);
+		while (peer_hist_queue.size() > 0) {
+			try {
+				std::string sql = peer_hist_queue.front();
+				mysqlpp::Query query = c.query(sql);
+				if (!query.exec()) {
+					std::cout << "Peer history flush failed (" << peer_hist_queue.size() << " remain)" << std::endl;
+					sleep(3);
+					continue;
+				} else {
+					std::lock_guard<std::mutex> phq_lock(peer_hist_queue_lock);
+					peer_hist_queue.pop();
+				}
+			}
+			catch (const mysqlpp::BadQuery &er) {
+				std::cerr << "Query error: " << er.what() << " in flush peer history with a qlength: " << peer_hist_queue.front().size() << " queue size: " << peer_hist_queue.size() << std::endl;
+				sleep(3);
+				continue;
+			} catch (const mysqlpp::Exception &er) {
+				std::cerr << "Query error: " << er.what() << " in flush peer history with a qlength: " << peer_hist_queue.front().size() << " queue size: " << peer_hist_queue.size() << std::endl;
+				sleep(3);
+				continue;
+			}
+		}
+	}
+	catch (const mysqlpp::Exception &er) {
+		std::cerr << "MySQL error in flush_peer_hist: " << er.what() << std::endl;
+	}
+	hist_active = false;
 }
 
 void mysql::do_flush_snatches() {
