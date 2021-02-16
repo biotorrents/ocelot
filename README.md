@@ -1,6 +1,8 @@
 # Ocelot
 
-Ocelot is a BitTorrent tracker written in C++ for the [Gazelle](http://whatcd.github.io/Gazelle/) project. It supports requests over TCP and can only track IPv4 peers.
+Ocelot is a BitTorrent tracker written in C++ for the [Gazelle](http://whatcd.github.io/Gazelle/) project.
+It supports requests over TCP and can only track IPv4 peers.
+
 
 ## Ocelot Compile-time Dependencies
 
@@ -10,13 +12,30 @@ Ocelot is a BitTorrent tracker written in C++ for the [Gazelle](http://whatcd.gi
 * [MySQL++](http://tangentsoft.net/mysql++/) (3.2.0+ required)
 * [TCMalloc](http://goog-perftools.sourceforge.net/doc/tcmalloc.html) (optional, but strongly recommended)
 
+```sh
+apt install \
+	automake \
+	g++ \
+	gcc \
+	libboost-dev \
+	libboost-iostreams-dev \
+	libboost-system-dev \
+	libev-dev \
+	libmysql++-dev \
+	libtcmalloc-minimal4 \
+	make
+```
+
+
 ## Installation
 
 The [Gazelle installation guides](https://github.com/WhatCD/Gazelle/wiki/Gazelle-installation) include instructions for installing Ocelot as a part of the Gazelle project.
 
+
 ### Standalone Installation
 
 * Create the following tables according to the [Gazelle database schema](https://raw.githubusercontent.com/WhatCD/Gazelle/master/gazelle.sql):
+
  - `torrents`
  - `users_freeleeches`
  - `users_main`
@@ -28,9 +47,18 @@ The [Gazelle installation guides](https://github.com/WhatCD/Gazelle/wiki/Gazelle
 
 * Build Ocelot:
 
-        ./configure
-        make
-        make install
+```sh
+cd ocelot/
+autoreconf
+./configure \
+	--with-boost-libdir=/usr/lib/x86_64-linux-gnu \
+	--with-ev-lib=/usr/lib/x86_64-linux-gnu \
+	--with-mysql-lib=/usr/lib/x86_64-linux-gnu \
+	--with-mysqlpp-lib=/usr/lib/x86_64-linux-gnu
+make
+make install
+```
+
 
 ## Running Ocelot
 
@@ -38,6 +66,7 @@ The [Gazelle installation guides](https://github.com/WhatCD/Gazelle/wiki/Gazelle
 
 * `-c <path/to/ocelot.conf>` - Path to config file. If unspecified, the current working directory is used.
 * `-v` - Print queue status every time a flush is initiated.
+
 
 ### Signals
 
