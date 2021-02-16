@@ -22,8 +22,12 @@ mysql::mysql(config * conf) : u_active(false), t_active(false), p_active(false),
 	}
 
 	try {
+		mysqlpp::SslOption crypto(tls_key.c_str(), tls_cert.c_str(), tls_ca.c_str());
+		conn.set_option(&crypto);
+
 		mysqlpp::ReconnectOption reconnect(true);
 		conn.set_option(&reconnect);
+
 		conn.connect(mysql_db.c_str(), mysql_host.c_str(), mysql_username.c_str(), mysql_password.c_str(), 0);
 	} catch (const mysqlpp::Exception &er) {
 		std::cout << "Failed to connect to MySQL (" << er.what() << ')' << std::endl;
@@ -43,8 +47,13 @@ void mysql::load_config(config * conf) {
 	mysql_host = conf->get_str("mysql_host");
 	mysql_username = conf->get_str("mysql_username");
 	mysql_password = conf->get_str("mysql_password");
+
 	readonly = conf->get_bool("readonly");
 	disable_peer_history = conf->get_bool("disable_peer_history");
+
+	tls_cert = conf->get_str("tls_cert");
+	tls_key = conf->get_str("tls_key");
+	tls_ca = conf->get_str("tls_ca");
 }
 
 void mysql::reload_config(config * conf) {
@@ -208,7 +217,6 @@ void mysql::load_tokens(torrent_list &torrents) {
 	std::cout << "Loaded " << token_count << " tokens" << std::endl;
 }
 
-
 void mysql::load_whitelist(std::vector<std::string> &whitelist) {
 	mysqlpp::Query query = conn.query("SELECT peer_id FROM xbt_client_whitelist;");
 	try {
@@ -263,6 +271,7 @@ void mysql::record_peer(const std::string &record, const std::string &ip, const 
 
 	update_heavy_peer_buffer += q.str();
 }
+
 void mysql::record_peer(const std::string &record, const std::string &peer_id) {
 	if (update_light_peer_buffer != "") {
 		update_light_peer_buffer += ",";

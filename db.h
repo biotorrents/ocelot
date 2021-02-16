@@ -27,6 +27,8 @@ class mysql {
 		std::queue<std::string> peer_hist_queue;
 
 		std::string mysql_db, mysql_host, mysql_username, mysql_password;
+		std::string tls_cert, tls_key, tls_ca;
+
 		bool u_active, t_active, p_active, s_active, tok_active, hist_active;
 		bool readonly, disable_peer_history;
 

@@ -80,6 +80,10 @@ void config::init() {
 	add("mysql_username", "");
 	add("mysql_password", "");
 
+	add("tls_cert", "");
+	add("tls_key", "");
+	add("tls_ca", "");
+
 	// Site communication
 	add("site_host", "127.0.0.1");
 	add("site_path", "");
